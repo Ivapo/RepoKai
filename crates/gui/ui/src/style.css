@@ -447,10 +447,18 @@ body {
   letter-spacing: 0.5px;
 }
 
+[data-theme="3.1"] #repo-list .btn-clone {
+  right: 85px;
+}
+
 [data-theme="tui"] .panel-action {
   top: 1px;
   border-radius: 0;
   background: var(--bg-primary);
+}
+
+[data-theme="tui"] #repo-list .btn-clone {
+  right: 85px;
 }
 
 #readme-content {

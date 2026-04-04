@@ -250,7 +250,7 @@ async function showPublishDialog(): Promise<void> {
     "Publish Local Repo to GitHub",
     `<label>Local path<input name="local_path" type="text" value="${escapeHtml(folderPath)}" readonly /></label>
      <label>Repo name<input name="name" type="text" value="${escapeHtml(defaultName)}" placeholder="my-project" /></label>
-     <label>Description<input name="description" type="text" placeholder="Optional description" /></label>
+     <label>Description<textarea name="description" rows="3" placeholder="Optional description"></textarea></label>
      <label class="checkbox"><input name="private" type="checkbox" /> Private repository</label>`,
     [
       { label: "Cancel", onClick: closeDialog },
