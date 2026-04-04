@@ -1,4 +1,15 @@
+# Rust
 /target
-Cargo.lock
+
+# Frontend
+crates/gui/ui/node_modules
+crates/gui/ui/dist
+
+# Tauri generated
+crates/gui/gen
+
+# OS
 .DS_Store
+
+# Environment
 .env
