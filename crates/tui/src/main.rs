@@ -387,13 +387,29 @@ async fn run(
                                 continue;
                             }
                             KeyCode::Enter => {
-                                if let Some(repo) = app.selected_repo() {
-                                    let (o, n) = (repo.owner.clone(), repo.name.clone());
-                                    app.readme_content = Some("Loading...".into());
-                                    terminal.draw(|frame| ui(frame, app))?;
-                                    app.readme_content =
-                                        fetch_readme(client, &o, &n).await.unwrap_or(None);
-                                    app.readme_scroll = 0;
+                                match app.focused_panel {
+                                    Panel::Repos => {
+                                        if let Some(repo) = app.selected_repo() {
+                                            let (o, n) = (repo.owner.clone(), repo.name.clone());
+                                            app.readme_content = Some("Loading...".into());
+                                            terminal.draw(|frame| ui(frame, app))?;
+                                            app.readme_content =
+                                                fetch_readme(client, &o, &n).await.unwrap_or(None);
+                                            app.readme_scroll = 0;
+                                        }
+                                    }
+                                    Panel::Info => {
+                                        // URL field — open in browser
+                                        if app.info_field == 2 {
+                                            if let Some(repo) = app.selected_repo() {
+                                                let url = repo.url.clone();
+                                                let _ = std::process::Command::new("open")
+                                                    .arg(&url)
+                                                    .spawn();
+                                            }
+                                        }
+                                    }
+                                    Panel::Readme => {}
                                 }
                                 continue;
                             }
@@ -474,11 +490,29 @@ async fn run(
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     if app.selected > 0 {
                                         app.selected -= 1;
+                                        app.readme_scroll = 0;
+                                        app.info_field = 0;
+                                        if let Some(repo) = app.selected_repo() {
+                                            let (o, n) = (repo.owner.clone(), repo.name.clone());
+                                            app.readme_content = Some("Loading...".into());
+                                            terminal.draw(|frame| ui(frame, app))?;
+                                            app.readme_content =
+                                                fetch_readme(client, &o, &n).await.unwrap_or(None);
+                                        }
                                     }
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     if app.selected + 1 < app.repos.len() {
                                         app.selected += 1;
+                                        app.readme_scroll = 0;
+                                        app.info_field = 0;
+                                        if let Some(repo) = app.selected_repo() {
+                                            let (o, n) = (repo.owner.clone(), repo.name.clone());
+                                            app.readme_content = Some("Loading...".into());
+                                            terminal.draw(|frame| ui(frame, app))?;
+                                            app.readme_content =
+                                                fetch_readme(client, &o, &n).await.unwrap_or(None);
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -494,17 +528,6 @@ async fn run(
                                     KeyCode::Down | KeyCode::Char('j') => {
                                         if app.info_field + 1 < INFO_FIELD_COUNT {
                                             app.info_field += 1;
-                                        }
-                                    }
-                                    KeyCode::Enter => {
-                                        // Field 2 is URL — open in browser
-                                        if app.info_field == 2 {
-                                            if let Some(repo) = app.selected_repo() {
-                                                let url = repo.url.clone();
-                                                let _ = std::process::Command::new("open")
-                                                    .arg(&url)
-                                                    .spawn();
-                                            }
                                         }
                                     }
                                     _ => {}
