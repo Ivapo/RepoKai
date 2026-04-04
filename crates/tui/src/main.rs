@@ -719,7 +719,10 @@ fn render_prompt(frame: &mut Frame, state: &PromptState) {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {} ", field.label), label_style),
                 Span::styled(check, Style::default().fg(Color::White)),
-                Span::styled(if focused { " \u{25c0}" } else { "" }, Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    if focused { "  Space:toggle" } else { "" },
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]));
         } else {
             let mut label_line = vec![Span::styled(
@@ -802,20 +805,28 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
 }
 
 fn render_repo_list(frame: &mut Frame, app: &App, area: Rect) {
+    // Available width inside borders
+    let inner_width = area.width.saturating_sub(2) as usize;
+
     let items: Vec<ListItem> = app
         .repos
         .iter()
         .enumerate()
         .map(|(i, repo)| {
-            let icon = if repo.visibility == "private" {
-                "\u{f023} "
-            } else {
-                "  "
-            };
+            let repo_icon = "\u{f0cd0} "; // repo icon
+            let lock = if repo.visibility == "private" { " \u{f023}" } else { "" };
+            let name = &repo.name;
+
+            // repo_icon (2) + name + padding + lock (2 or 0)
+            let used = 2 + name.len() + lock.len();
+            let padding = if inner_width > used { inner_width - used } else { 0 };
+
             let name_style = Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD);
             let line = Line::from(vec![
-                Span::styled(icon, Style::default().fg(Color::DarkGray)),
-                Span::styled(&repo.name, name_style),
+                Span::styled(repo_icon, Style::default().fg(Color::Rgb(255, 191, 0))),
+                Span::styled(name, name_style),
+                Span::raw(" ".repeat(padding)),
+                Span::styled(lock, Style::default().fg(Color::DarkGray)),
             ]);
             let style = if i == app.selected {
                 Style::default().fg(Color::White).bg(Color::DarkGray)
