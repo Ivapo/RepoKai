@@ -1,0 +1,10 @@
+[package]
+name = "repokai-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+repokai-core = { path = "../core" }
+ratatui = "0.30"
+crossterm = "0.29"
+tokio = { version = "1", features = ["full"] }

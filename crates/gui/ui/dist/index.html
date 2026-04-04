@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RepoKai</title>
+  <script type="module" crossorigin src="/assets/index-DX43ol2Q.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BTHoXRNt.css">
+</head>
+<body>
+  <div id="toolbar">
+    <span id="app-title">RepoKai</span>
+    <span id="user-info"></span>
+    <button id="theme-toggle" title="Cycle theme (t)">dark</button>
+  </div>
+  <div id="app">
+    <div id="repo-list" class="panel">
+      <span class="panel-title">Repositories</span>
+      <button id="btn-publish" class="panel-action" title="Publish local repo (p)">Publish</button>
+      <button id="btn-clone" class="panel-action btn-clone" title="Clone selected repo (c)">Clone</button>
+      <div class="panel-content">
+        <ul id="repos"></ul>
+      </div>
+    </div>
+    <div id="right-side">
+      <div id="info-panel" class="panel">
+        <span class="panel-title">Info</span>
+        <button id="btn-edit" class="panel-action" title="Edit repo settings (e)">Edit</button>
+        <div class="panel-content" id="info-content"></div>
+      </div>
+      <div id="readme-panel" class="panel">
+        <span class="panel-title">README</span>
+        <button id="readme-toggle" class="panel-action" title="Toggle rendered/raw">HTML</button>
+        <div class="panel-content" id="readme-content">
+          <div class="loading">Loading repositories...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dialogs -->
+  <div id="dialog-overlay" class="hidden">
+    <div id="dialog">
+      <div id="dialog-title"></div>
+      <div id="dialog-body"></div>
+      <div id="dialog-actions"></div>
+    </div>
+  </div>
+
+</body>
+</html>
