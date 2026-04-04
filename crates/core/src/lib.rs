@@ -34,21 +34,56 @@ pub enum RepoKaiError {
 }
 
 fn resolve_token() -> Result<String, RepoKaiError> {
+    // 1. Environment variable
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         return Ok(token);
     }
-    // Fall back to `gh auth token`
-    let output = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .map_err(|_| RepoKaiError::MissingToken)?;
-    if output.status.success() {
-        let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !token.is_empty() {
-            return Ok(token);
+
+    // 2. macOS Keychain (works even when launched from dock)
+    if let Ok(token) = read_token_from_keychain() {
+        return Ok(token);
+    }
+
+    // 3. Fall back to `gh auth token`
+    for gh_path in &["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"] {
+        if let Ok(output) = Command::new(gh_path).args(["auth", "token"]).output() {
+            if output.status.success() {
+                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !token.is_empty() {
+                    return Ok(token);
+                }
+            }
         }
     }
+
     Err(RepoKaiError::MissingToken)
+}
+
+fn read_token_from_keychain() -> Result<String, RepoKaiError> {
+    let output = Command::new("security")
+        .args(["find-generic-password", "-s", "gh:github.com", "-a", "", "-w"])
+        .output()
+        .map_err(|_| RepoKaiError::MissingToken)?;
+
+    if !output.status.success() {
+        return Err(RepoKaiError::MissingToken);
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // gh stores tokens as "go-keyring-base64:BASE64_ENCODED_TOKEN"
+    if let Some(encoded) = raw.strip_prefix("go-keyring-base64:") {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| RepoKaiError::MissingToken)?;
+        String::from_utf8(bytes).map_err(|_| RepoKaiError::MissingToken)
+    } else if raw.starts_with("ghp_") || raw.starts_with("gho_") || raw.starts_with("github_pat_") {
+        // Plain token without encoding
+        Ok(raw)
+    } else {
+        Err(RepoKaiError::MissingToken)
+    }
 }
 
 pub async fn create_client() -> Result<Octocrab, RepoKaiError> {

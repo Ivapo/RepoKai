@@ -25,6 +25,8 @@ let selectedIndex = -1;
 let dialogOpen = false;
 let readmeRaw = "";
 let readmeRendered = false;
+let sortOrder: "recent" | "a-z" = "recent";
+let reposOriginal: Repo[] = [];
 
 // ---- Theme cycling ----
 
@@ -88,6 +90,24 @@ function getDialogChecked(name: string): boolean {
 
 // ---- App ----
 
+function applySort(): void {
+  if (sortOrder === "a-z") {
+    repos = [...reposOriginal].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  } else {
+    repos = [...reposOriginal];
+  }
+  document.getElementById("btn-sort")!.textContent = sortOrder;
+}
+
+function toggleSort(): void {
+  sortOrder = sortOrder === "recent" ? "a-z" : "recent";
+  applySort();
+  renderRepoList();
+  if (repos.length > 0 && selectedIndex >= 0) {
+    selectRepo(Math.min(selectedIndex, repos.length - 1));
+  }
+}
+
 async function init(): Promise<void> {
   try {
     const username = await invoke<string>("get_user");
@@ -97,7 +117,8 @@ async function init(): Promise<void> {
   }
 
   try {
-    repos = await invoke<Repo[]>("get_repos");
+    reposOriginal = await invoke<Repo[]>("get_repos");
+    applySort();
     renderRepoList();
     if (repos.length > 0) {
       selectRepo(0);
@@ -113,7 +134,8 @@ async function init(): Promise<void> {
 
 async function refreshRepos(): Promise<void> {
   try {
-    repos = await invoke<Repo[]>("get_repos");
+    reposOriginal = await invoke<Repo[]>("get_repos");
+    applySort();
     renderRepoList();
     if (selectedIndex >= repos.length) selectedIndex = repos.length - 1;
     if (selectedIndex >= 0) selectRepo(selectedIndex);
@@ -381,6 +403,8 @@ function showEditDialog(): void {
 
 // ---- Toolbar buttons ----
 
+document.getElementById("btn-sort")!.addEventListener("click", toggleSort);
+document.getElementById("btn-refresh")!.addEventListener("click", refreshRepos);
 document.getElementById("btn-publish")!.addEventListener("click", showPublishDialog);
 document.getElementById("btn-clone")!.addEventListener("click", showCloneDialog);
 document.getElementById("btn-edit")!.addEventListener("click", showEditDialog);
@@ -418,6 +442,10 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
     showCloneDialog();
   } else if (e.key === "e") {
     showEditDialog();
+  } else if (e.key === "s") {
+    toggleSort();
+  } else if (e.key === "r") {
+    refreshRepos();
   } else if (e.key === "o") {
     const repo = repos[selectedIndex];
     if (repo?.url) openUrl(repo.url);

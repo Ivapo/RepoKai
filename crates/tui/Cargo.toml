@@ -3,6 +3,10 @@ name = "repokai-tui"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "repokai"
+path = "src/main.rs"
+
 [dependencies]
 repokai-core = { path = "../core" }
 ratatui = "0.30"
