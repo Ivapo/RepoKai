@@ -201,6 +201,7 @@ fn compute_completions(input: &str) -> Vec<String> {
 }
 
 const INFO_FIELD_COUNT: usize = 7;
+const README_HPAD: u16 = 2;
 
 #[derive(Default, Clone, Copy)]
 struct PanelAreas {
@@ -890,7 +891,9 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     app.areas = PanelAreas { repos: outer[0], info: right[0], readme: right[1] };
     app.clamp_repo_offset();
-    app.ensure_readme_rendered(app.areas.readme.width.saturating_sub(2));
+    app.ensure_readme_rendered(
+        app.areas.readme.width.saturating_sub(2 + 2 * README_HPAD),
+    );
 
     render_repo_list(frame, app, app.areas.repos);
     render_repo_info(frame, app, app.areas.info);
@@ -1092,6 +1095,7 @@ fn render_readme(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(border_style(app, Panel::Readme))
+                .padding(Padding::horizontal(README_HPAD))
                 .title(" README ")
                 .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         )
