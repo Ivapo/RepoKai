@@ -21,7 +21,17 @@ A GitHub repository browser and manager with both a terminal UI and a desktop GU
   - Set the `GITHUB_TOKEN` environment variable with a personal access token, or
   - Log in with the [GitHub CLI](https://cli.github.com): `gh auth login`
 
-## Running
+## Installing
+
+The terminal UI is on [crates.io](https://crates.io/crates/repokai-tui):
+
+```bash
+cargo install repokai-tui
+```
+
+This installs the `repokai` binary. The GUI is not packaged — run it from source (below).
+
+## Running from source
 
 ### Terminal UI
 
