@@ -2,6 +2,13 @@
 name = "repokai-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "GitHub API layer for RepoKai: fetch your repositories and READMEs, publish, clone, and edit repos (octocrab-based)"
+keywords = ["github", "api", "repository"]
+categories = ["api-bindings"]
 
 [dependencies]
 octocrab = "0.49"

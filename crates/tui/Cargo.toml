@@ -2,13 +2,20 @@
 name = "repokai-tui"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "A terminal UI for browsing and managing your GitHub repositories: rendered-markdown READMEs, mouse support, publish/clone/edit"
+keywords = ["github", "tui", "terminal", "repository", "browser"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "repokai"
 path = "src/main.rs"
 
 [dependencies]
-repokai-core = { path = "../core" }
+repokai-core = { path = "../core", version = "0.1.0" }
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = "0.29"
 tokio = { version = "1", features = ["full"] }

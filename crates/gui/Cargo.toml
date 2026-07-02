@@ -2,6 +2,7 @@
 name = "repokai-gui"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [lib]
 name = "repokai_gui"
