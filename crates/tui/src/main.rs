@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
+    MouseEvent, MouseEventKind,
+};
 use ratatui::{prelude::*, widgets::*};
 use repokai_core::{
     clone_repo, create_client, fetch_readme, fetch_repos, get_authenticated_user,
@@ -116,6 +119,24 @@ fn visual_line_count<'a>(text: impl Into<Text<'a>>, width: u16) -> u16 {
         .min(u16::MAX as usize) as u16
 }
 
+fn init_terminal() -> ratatui::DefaultTerminal {
+    let terminal = ratatui::init();
+    let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+    // ratatui's panic hook only calls ratatui::restore(), which doesn't know
+    // about mouse capture; chain a hook that turns it off first (LIFO order).
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+        prev(info);
+    }));
+    terminal
+}
+
+fn restore_terminal() {
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+    ratatui::restore();
+}
+
 fn home_dir() -> String {
     std::env::var("HOME").unwrap_or_else(|_| "/".into())
 }
@@ -176,6 +197,8 @@ fn compute_completions(input: &str) -> Vec<String> {
     matches.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
     matches
 }
+
+const INFO_FIELD_COUNT: usize = 7;
 
 #[derive(Default, Clone, Copy)]
 struct PanelAreas {
@@ -248,6 +271,44 @@ impl App {
         }
     }
 
+    fn scroll_repo_list(&mut self, delta: i32) {
+        let vh = self.repos_viewport().max(1) as usize;
+        let max = self.repos.len().saturating_sub(vh);
+        let next = (self.repo_offset as i64 + delta as i64).clamp(0, max as i64);
+        self.repo_offset = next as usize;
+    }
+
+    fn panel_at(&self, x: u16, y: u16) -> Option<Panel> {
+        let pos = Position::new(x, y);
+        if self.areas.repos.contains(pos) {
+            Some(Panel::Repos)
+        } else if self.areas.info.contains(pos) {
+            Some(Panel::Info)
+        } else if self.areas.readme.contains(pos) {
+            Some(Panel::Readme)
+        } else {
+            None
+        }
+    }
+
+    fn repo_row_at(&self, x: u16, y: u16) -> Option<usize> {
+        let inner = self.areas.repos.inner(Margin::new(1, 1));
+        if !inner.contains(Position::new(x, y)) {
+            return None;
+        }
+        let index = self.repo_offset + (y - inner.y) as usize;
+        (index < self.repos.len()).then_some(index)
+    }
+
+    fn info_row_at(&self, x: u16, y: u16) -> Option<usize> {
+        let inner = self.areas.info.inner(Margin::new(1, 1));
+        if !inner.contains(Position::new(x, y)) {
+            return None;
+        }
+        let row = (y - inner.y) as usize;
+        (row < INFO_FIELD_COUNT).then_some(row)
+    }
+
     fn readme_viewport(&self) -> u16 {
         self.areas.readme.height.saturating_sub(2)
     }
@@ -311,7 +372,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let mut terminal = ratatui::init();
+    let mut terminal = init_terminal();
     let mut app = App::new(repos);
     app.username = username;
 
@@ -321,7 +382,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let result = run(&mut terminal, &mut app, &client).await;
-    ratatui::restore();
+    restore_terminal();
     result
 }
 
@@ -336,7 +397,11 @@ async fn run(
         terminal.draw(|frame| ui(frame, app))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
+            match event::read()? {
+                Event::Mouse(mouse) => {
+                    handle_mouse(terminal, app, client, mouse).await?;
+                }
+                Event::Key(key) => {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -573,7 +638,6 @@ async fn run(
                                 _ => {}
                             },
                             Panel::Info => {
-                                const INFO_FIELD_COUNT: usize = 7;
                                 match key.code {
                                     KeyCode::Up | KeyCode::Char('k') => {
                                         if app.info_field > 0 {
@@ -608,6 +672,8 @@ async fn run(
                         }
                     }
                 }
+                }
+                _ => {}
             }
         }
     }
@@ -630,6 +696,60 @@ async fn select_repo(
         terminal.draw(|frame| ui(frame, app))?;
         app.readme_content = fetch_readme(client, &o, &n).await.unwrap_or(None);
         app.invalidate_readme_layout();
+    }
+    Ok(())
+}
+
+async fn handle_mouse(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    client: &repokai_core::Octocrab,
+    mouse: MouseEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match &app.mode {
+        Mode::Prompt(_) => return Ok(()),
+        Mode::Message(_) => {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                app.mode = Mode::Normal;
+            }
+            return Ok(());
+        }
+        Mode::Normal => {}
+    }
+
+    match mouse.kind {
+        MouseEventKind::ScrollUp => match app.panel_at(mouse.column, mouse.row) {
+            Some(Panel::Repos) => app.scroll_repo_list(-1),
+            Some(Panel::Readme) => app.readme_scroll_by(-3),
+            _ => {}
+        },
+        MouseEventKind::ScrollDown => match app.panel_at(mouse.column, mouse.row) {
+            Some(Panel::Repos) => app.scroll_repo_list(1),
+            Some(Panel::Readme) => app.readme_scroll_by(3),
+            _ => {}
+        },
+        MouseEventKind::Down(MouseButton::Left) => {
+            let Some(panel) = app.panel_at(mouse.column, mouse.row) else {
+                return Ok(());
+            };
+            app.focused_panel = panel;
+            match panel {
+                Panel::Repos => {
+                    if let Some(index) = app.repo_row_at(mouse.column, mouse.row) {
+                        if index != app.selected {
+                            select_repo(terminal, app, client, index).await?;
+                        }
+                    }
+                }
+                Panel::Info => {
+                    if let Some(row) = app.info_row_at(mouse.column, mouse.row) {
+                        app.info_field = row;
+                    }
+                }
+                Panel::Readme => {}
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
