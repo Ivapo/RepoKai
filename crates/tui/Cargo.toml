@@ -12,3 +12,6 @@ repokai-core = { path = "../core" }
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = "0.29"
 tokio = { version = "1", features = ["full"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+syntect = "5.3"
+unicode-width = "0.2"

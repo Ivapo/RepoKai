@@ -10,6 +10,8 @@ use repokai_core::{
     publish_local_repo, update_repo, PublishOptions, Repo, UpdateRepoOptions,
 };
 
+mod render;
+
 // ---- App state ----
 
 #[derive(Clone, Copy, PartialEq)]
@@ -214,7 +216,9 @@ struct App {
     readme_content: Option<String>,
     readme_scroll: u16,
     readme_line_count: u16,
+    readme_rendered: Option<Text<'static>>,
     readme_rendered_width: u16,
+    readme_loading: bool,
     info_field: usize,
     mode: Mode,
     status_msg: Option<String>,
@@ -235,7 +239,9 @@ impl App {
             readme_content: None,
             readme_scroll: 0,
             readme_line_count: 0,
+            readme_rendered: None,
             readme_rendered_width: 0,
+            readme_loading: false,
             info_field: 0,
             mode: Mode::Normal,
             status_msg: None,
@@ -325,6 +331,7 @@ impl App {
     }
 
     fn invalidate_readme_layout(&mut self) {
+        self.readme_rendered = None;
         self.readme_rendered_width = 0;
     }
 
@@ -332,11 +339,20 @@ impl App {
         if inner_width == 0 || self.readme_rendered_width == inner_width {
             return;
         }
-        let text = self
-            .readme_content
-            .as_deref()
-            .unwrap_or("Press Enter to load README");
-        self.readme_line_count = visual_line_count(text, inner_width);
+        match self.readme_content.as_deref() {
+            Some(content) if !self.readme_loading => {
+                let rendered = render::render(content, inner_width);
+                self.readme_line_count = visual_line_count(rendered.clone(), inner_width);
+                self.readme_rendered = Some(rendered);
+            }
+            other => {
+                // Placeholders ("Loading...", "Press Enter to load README")
+                // stay on the plain-text path.
+                let text = other.unwrap_or("Press Enter to load README");
+                self.readme_line_count = visual_line_count(text, inner_width);
+                self.readme_rendered = None;
+            }
+        }
         self.readme_rendered_width = inner_width;
         self.readme_scroll = self.readme_scroll.min(self.max_readme_scroll());
     }
@@ -692,9 +708,11 @@ async fn select_repo(
     if let Some(repo) = app.selected_repo() {
         let (o, n) = (repo.owner.clone(), repo.name.clone());
         app.readme_content = Some("Loading...".into());
+        app.readme_loading = true;
         app.invalidate_readme_layout();
         terminal.draw(|frame| ui(frame, app))?;
         app.readme_content = fetch_readme(client, &o, &n).await.unwrap_or(None);
+        app.readme_loading = false;
         app.invalidate_readme_layout();
     }
     Ok(())
@@ -1061,12 +1079,15 @@ fn render_repo_list(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_readme(frame: &mut Frame, app: &App, area: Rect) {
-    let text = app
-        .readme_content
-        .as_deref()
-        .unwrap_or("Press Enter to load README");
-
-    let paragraph = Paragraph::new(text)
+    let paragraph = match &app.readme_rendered {
+        Some(rendered) => Paragraph::new(rendered.clone()),
+        None => Paragraph::new(
+            app.readme_content
+                .as_deref()
+                .unwrap_or("Press Enter to load README"),
+        ),
+    };
+    let paragraph = paragraph
         .block(
             Block::default()
                 .borders(Borders::ALL)
