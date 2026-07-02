@@ -170,9 +170,17 @@ fn compute_completions(input: &str) -> Vec<String> {
     matches
 }
 
+#[derive(Default, Clone, Copy)]
+struct PanelAreas {
+    repos: Rect,
+    info: Rect,
+    readme: Rect,
+}
+
 struct App {
     repos: Vec<Repo>,
     selected: usize,
+    repo_offset: usize,
     readme_content: Option<String>,
     readme_scroll: u16,
     info_field: usize,
@@ -182,6 +190,7 @@ struct App {
     focused_panel: Panel,
     sort_order: SortOrder,
     repos_original: Vec<Repo>,
+    areas: PanelAreas,
 }
 
 impl App {
@@ -190,6 +199,7 @@ impl App {
             repos_original: repos.clone(),
             repos,
             selected: 0,
+            repo_offset: 0,
             readme_content: None,
             readme_scroll: 0,
             info_field: 0,
@@ -198,11 +208,33 @@ impl App {
             username: String::new(),
             focused_panel: Panel::Repos,
             sort_order: SortOrder::Recent,
+            areas: PanelAreas::default(),
         }
     }
 
     fn selected_repo(&self) -> Option<&Repo> {
         self.repos.get(self.selected)
+    }
+
+    fn repos_viewport(&self) -> u16 {
+        self.areas.repos.height.saturating_sub(2)
+    }
+
+    fn clamp_repo_offset(&mut self) {
+        let vh = self.repos_viewport().max(1) as usize;
+        self.repo_offset = self.repo_offset.min(self.repos.len().saturating_sub(vh));
+    }
+
+    fn ensure_selected_visible(&mut self) {
+        let vh = self.repos_viewport() as usize;
+        if vh == 0 {
+            return;
+        }
+        if self.selected < self.repo_offset {
+            self.repo_offset = self.selected;
+        } else if self.selected >= self.repo_offset + vh {
+            self.repo_offset = self.selected + 1 - vh;
+        }
     }
 
     fn apply_sort(&mut self) {
@@ -389,14 +421,7 @@ async fn run(
                             KeyCode::Enter => {
                                 match app.focused_panel {
                                     Panel::Repos => {
-                                        if let Some(repo) = app.selected_repo() {
-                                            let (o, n) = (repo.owner.clone(), repo.name.clone());
-                                            app.readme_content = Some("Loading...".into());
-                                            terminal.draw(|frame| ui(frame, app))?;
-                                            app.readme_content =
-                                                fetch_readme(client, &o, &n).await.unwrap_or(None);
-                                            app.readme_scroll = 0;
-                                        }
+                                        select_repo(terminal, app, client, app.selected).await?;
                                     }
                                     Panel::Info => {
                                         // URL field — open in browser
@@ -444,6 +469,7 @@ async fn run(
                                 app.sort_order = app.sort_order.toggle();
                                 app.apply_sort();
                                 app.selected = 0;
+                                app.repo_offset = 0;
                                 continue;
                             }
                             KeyCode::Char('r') => {
@@ -453,6 +479,8 @@ async fn run(
                                 if app.selected >= app.repos.len() {
                                     app.selected = app.repos.len().saturating_sub(1);
                                 }
+                                app.clamp_repo_offset();
+                                app.ensure_selected_visible();
                                 app.status_msg = None;
                                 continue;
                             }
@@ -489,30 +517,14 @@ async fn run(
                             Panel::Repos => match key.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     if app.selected > 0 {
-                                        app.selected -= 1;
-                                        app.readme_scroll = 0;
-                                        app.info_field = 0;
-                                        if let Some(repo) = app.selected_repo() {
-                                            let (o, n) = (repo.owner.clone(), repo.name.clone());
-                                            app.readme_content = Some("Loading...".into());
-                                            terminal.draw(|frame| ui(frame, app))?;
-                                            app.readme_content =
-                                                fetch_readme(client, &o, &n).await.unwrap_or(None);
-                                        }
+                                        select_repo(terminal, app, client, app.selected - 1)
+                                            .await?;
                                     }
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     if app.selected + 1 < app.repos.len() {
-                                        app.selected += 1;
-                                        app.readme_scroll = 0;
-                                        app.info_field = 0;
-                                        if let Some(repo) = app.selected_repo() {
-                                            let (o, n) = (repo.owner.clone(), repo.name.clone());
-                                            app.readme_content = Some("Loading...".into());
-                                            terminal.draw(|frame| ui(frame, app))?;
-                                            app.readme_content =
-                                                fetch_readme(client, &o, &n).await.unwrap_or(None);
-                                        }
+                                        select_repo(terminal, app, client, app.selected + 1)
+                                            .await?;
                                     }
                                 }
                                 _ => {}
@@ -548,6 +560,25 @@ async fn run(
             }
         }
     }
+}
+
+async fn select_repo(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    client: &repokai_core::Octocrab,
+    index: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    app.selected = index;
+    app.readme_scroll = 0;
+    app.info_field = 0;
+    app.ensure_selected_visible();
+    if let Some(repo) = app.selected_repo() {
+        let (o, n) = (repo.owner.clone(), repo.name.clone());
+        app.readme_content = Some("Loading...".into());
+        terminal.draw(|frame| ui(frame, app))?;
+        app.readme_content = fetch_readme(client, &o, &n).await.unwrap_or(None);
+    }
+    Ok(())
 }
 
 async fn handle_prompt_submit(
@@ -656,7 +687,7 @@ fn border_style(app: &App, panel: Panel) -> Style {
     }
 }
 
-fn ui(frame: &mut Frame, app: &App) {
+fn ui(frame: &mut Frame, app: &mut App) {
     let main_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(1)])
         .split(frame.area());
 
@@ -666,9 +697,12 @@ fn ui(frame: &mut Frame, app: &App) {
     let right = Layout::vertical([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(outer[1]);
 
-    render_repo_list(frame, app, outer[0]);
-    render_repo_info(frame, app, right[0]);
-    render_readme(frame, app, right[1]);
+    app.areas = PanelAreas { repos: outer[0], info: right[0], readme: right[1] };
+    app.clamp_repo_offset();
+
+    render_repo_list(frame, app, app.areas.repos);
+    render_repo_info(frame, app, app.areas.info);
+    render_readme(frame, app, app.areas.readme);
 
     // Status bar
     let status_text = match &app.status_msg {
@@ -845,7 +879,11 @@ fn render_repo_list(frame: &mut Frame, app: &App, area: Rect) {
             .title(format!(" Repositories [{sort_label}] "))
             .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     );
-    frame.render_widget(list, area);
+    // Selection is styled manually above; keep ListState's selected as None so
+    // the offset is honored verbatim (a Some selection would snap the viewport
+    // to it every frame, fighting view-only mouse scrolling).
+    let mut state = ListState::default().with_offset(app.repo_offset);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_readme(frame: &mut Frame, app: &App, area: Rect) {
