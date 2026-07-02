@@ -22,9 +22,11 @@ crates/gui/    — desktop app (Tauri v2)
 - `Repo` fields: owner, name, description, url, language, stars, visibility, last_updated, readme
 
 ### tui (`repokai-tui`)
-- Terminal UI with 3-panel layout: left repo list (30%), top-right README (65%), bottom-right info (35%)
-- Uses ratatui + crossterm backend
-- Navigation: Arrow keys to browse, Enter to load README, j/k or PageUp/PageDown to scroll README, q/Esc to quit
+- Terminal UI with 3-panel layout: left repo list (30%), top-right info (35%), bottom-right README (65%)
+- Uses ratatui + crossterm backend; alternate screen + raw mode + **mouse capture** (`init_terminal`/`restore_terminal` in `main.rs` — mouse capture is turned off on exit and on panic via a chained hook, because `ratatui::restore()` doesn't know about it)
+- `src/render.rs` renders the README as styled markdown — ported from `~/dev/main/mdview` and kept visually identical: heading colors with `═`/`─` underbars, syntect-highlighted code blocks, box-drawn tables pre-fit to the panel width, blockquotes, task lists, links. The rendered `Text` is cached on `App` (`readme_rendered`) and rebuilt only when the content or the panel inner width changes; syntect's `SyntaxSet`/`Theme` load once via `LazyLock` statics. Placeholders ("Loading...", "Press Enter to load README") stay plain text
+- Scroll model: the repo list owns a view offset (`repo_offset`) and renders with `ListState` whose selection stays `None` — a `Some` selection would snap the viewport to it every frame and fight view-only wheel scrolling; keyboard nav pulls the offset along via `ensure_selected_visible()`. README scrolling clamps to the wrapped line count (`Paragraph::line_count`, ratatui feature `unstable-rendered-line-info`), leaving one blank row past the end; a DarkGray scrollbar appears on the README's right border when content overflows
+- Navigation: arrows/j/k browse repos (auto-loads README), Tab/Shift-Tab switch panels, Enter reloads README / opens URL, j/k + PageUp/PageDown scroll the README, mouse wheel scrolls the panel under the cursor (repo list scrolls the view only — selection stays put, no fetches), left-click focuses a panel and selects the clicked repo/info row, s sort, r refresh, o open, p publish, c clone, e edit, q/Esc quit
 - Styled after PanEx TUI: green active border, cyan titles, DarkGray inactive borders, blue folder names
 
 ### gui (`repokai-gui`)
@@ -43,6 +45,23 @@ GITHUB_TOKEN=ghp_... cargo run -p repokai-tui
 # Desktop GUI
 GITHUB_TOKEN=ghp_... cargo run -p repokai-gui
 ```
+
+## Verifying TUI changes
+
+The TUI can't be driven from a non-tty shell (`enable_raw_mode` fails). Smoke-test with `expect` and a pty:
+
+```sh
+expect -c '
+spawn ./target/debug/repokai
+expect -re "Repositories"
+sleep 1
+send "j"; sleep 0.5
+send "q"
+expect eof
+'
+```
+
+Alt-screen enter/leave (`[?1049h`/`[?1049l`) plus mouse capture off (`[?1000l`) in the output with exit 0 means the boot/teardown path is fine. Mouse events can be injected as SGR sequences (e.g. wheel-down `\x1b[<65;10;10M`, left click `\x1b[<0;10;5M`). Note ratatui renders cell diffs, so don't grep the raw stream for full strings — reconstruct the final screen (replay cursor moves) or force a full repaint first. Visual correctness needs a real terminal — say so rather than claiming success.
 
 ## Coding Conventions
 
