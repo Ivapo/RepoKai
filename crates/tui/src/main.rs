@@ -109,6 +109,13 @@ impl PromptField {
     }
 }
 
+fn visual_line_count<'a>(text: impl Into<Text<'a>>, width: u16) -> u16 {
+    Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .line_count(width.max(1))
+        .min(u16::MAX as usize) as u16
+}
+
 fn home_dir() -> String {
     std::env::var("HOME").unwrap_or_else(|_| "/".into())
 }
@@ -183,6 +190,8 @@ struct App {
     repo_offset: usize,
     readme_content: Option<String>,
     readme_scroll: u16,
+    readme_line_count: u16,
+    readme_rendered_width: u16,
     info_field: usize,
     mode: Mode,
     status_msg: Option<String>,
@@ -202,6 +211,8 @@ impl App {
             repo_offset: 0,
             readme_content: None,
             readme_scroll: 0,
+            readme_line_count: 0,
+            readme_rendered_width: 0,
             info_field: 0,
             mode: Mode::Normal,
             status_msg: None,
@@ -235,6 +246,38 @@ impl App {
         } else if self.selected >= self.repo_offset + vh {
             self.repo_offset = self.selected + 1 - vh;
         }
+    }
+
+    fn readme_viewport(&self) -> u16 {
+        self.areas.readme.height.saturating_sub(2)
+    }
+
+    fn max_readme_scroll(&self) -> u16 {
+        // Leave one blank row below the last line as an end-of-content marker.
+        self.readme_line_count
+            .saturating_sub(self.readme_viewport().max(1).saturating_sub(1))
+    }
+
+    fn readme_scroll_by(&mut self, delta: i32) {
+        let next = (self.readme_scroll as i32 + delta).clamp(0, self.max_readme_scroll() as i32);
+        self.readme_scroll = next as u16;
+    }
+
+    fn invalidate_readme_layout(&mut self) {
+        self.readme_rendered_width = 0;
+    }
+
+    fn ensure_readme_rendered(&mut self, inner_width: u16) {
+        if inner_width == 0 || self.readme_rendered_width == inner_width {
+            return;
+        }
+        let text = self
+            .readme_content
+            .as_deref()
+            .unwrap_or("Press Enter to load README");
+        self.readme_line_count = visual_line_count(text, inner_width);
+        self.readme_rendered_width = inner_width;
+        self.readme_scroll = self.readme_scroll.min(self.max_readme_scroll());
     }
 
     fn apply_sort(&mut self) {
@@ -547,10 +590,18 @@ async fn run(
                             }
                             Panel::Readme => match key.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
-                                    app.readme_scroll = app.readme_scroll.saturating_sub(3);
+                                    app.readme_scroll_by(-3);
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    app.readme_scroll = app.readme_scroll.saturating_add(3);
+                                    app.readme_scroll_by(3);
+                                }
+                                KeyCode::PageUp => {
+                                    let page = app.readme_viewport().saturating_sub(1) as i32;
+                                    app.readme_scroll_by(-page.max(1));
+                                }
+                                KeyCode::PageDown => {
+                                    let page = app.readme_viewport().saturating_sub(1) as i32;
+                                    app.readme_scroll_by(page.max(1));
                                 }
                                 _ => {}
                             },
@@ -575,8 +626,10 @@ async fn select_repo(
     if let Some(repo) = app.selected_repo() {
         let (o, n) = (repo.owner.clone(), repo.name.clone());
         app.readme_content = Some("Loading...".into());
+        app.invalidate_readme_layout();
         terminal.draw(|frame| ui(frame, app))?;
         app.readme_content = fetch_readme(client, &o, &n).await.unwrap_or(None);
+        app.invalidate_readme_layout();
     }
     Ok(())
 }
@@ -699,6 +752,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     app.areas = PanelAreas { repos: outer[0], info: right[0], readme: right[1] };
     app.clamp_repo_offset();
+    app.ensure_readme_rendered(app.areas.readme.width.saturating_sub(2));
 
     render_repo_list(frame, app, app.areas.repos);
     render_repo_info(frame, app, app.areas.info);
@@ -903,6 +957,20 @@ fn render_readme(frame: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false })
         .scroll((app.readme_scroll, 0));
     frame.render_widget(paragraph, area);
+
+    if app.readme_line_count > app.readme_viewport() {
+        let mut scrollbar_state = ScrollbarState::new(app.max_readme_scroll() as usize)
+            .position(app.readme_scroll as usize);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .style(Style::default().fg(Color::DarkGray)),
+            area.inner(Margin { horizontal: 0, vertical: 1 }),
+            &mut scrollbar_state,
+        );
+    }
 }
 
 fn render_repo_info(frame: &mut Frame, app: &App, area: Rect) {
