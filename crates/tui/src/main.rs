@@ -492,11 +492,23 @@ async fn run(
     app: &mut App,
     client: &repokai_core::Octocrab,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut needs_redraw = true;
     loop {
-        terminal.draw(|frame| ui(frame, app))?;
+        if needs_redraw {
+            terminal.draw(|frame| ui(frame, app))?;
+            needs_redraw = false;
+        }
 
         if event::poll(Duration::from_millis(100))? {
-            match event::read()? {
+            let ev = event::read()?;
+            // Redraw after any event except mouse movement, which every handler
+            // ignores. An idle app writes nothing — otherwise the per-frame
+            // preamble keeps terminal tabs showing activity.
+            needs_redraw = !matches!(
+                ev,
+                Event::Mouse(MouseEvent { kind: MouseEventKind::Moved, .. })
+            );
+            match ev {
                 Event::Mouse(mouse) => {
                     handle_mouse(terminal, app, client, mouse).await?;
                 }
