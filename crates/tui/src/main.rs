@@ -6,8 +6,9 @@ use crossterm::event::{
 };
 use ratatui::{prelude::*, widgets::*};
 use repokai_core::{
-    clone_repo, create_client, fetch_readme, fetch_repos, get_authenticated_user,
-    publish_local_repo, update_repo, PublishOptions, Repo, UpdateRepoOptions,
+    clone_repo, create_client, fetch_readme, fetch_repos, fetch_starred_repos,
+    get_authenticated_user, publish_local_repo, update_repo, PublishOptions, Repo,
+    UpdateRepoOptions,
 };
 
 mod render;
@@ -32,6 +33,28 @@ impl SortOrder {
         match self {
             SortOrder::Recent => "recent",
             SortOrder::Alphabetical => "a-z",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum RepoSource {
+    Mine,
+    Starred,
+}
+
+impl RepoSource {
+    fn toggle(self) -> Self {
+        match self {
+            RepoSource::Mine => RepoSource::Starred,
+            RepoSource::Starred => RepoSource::Mine,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            RepoSource::Mine => "Repositories",
+            RepoSource::Starred => "Starred \u{2605}",
         }
     }
 }
@@ -112,6 +135,53 @@ impl PromptField {
             is_path: false, completions: Vec::new(), completion_index: None,
         }
     }
+}
+
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
+    for word in text.split_whitespace() {
+        let word_len = word.chars().count();
+        // Hard-break words longer than the line width
+        if word_len > width {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut chunk = String::new();
+            let mut chunk_len = 0;
+            for ch in word.chars() {
+                if chunk_len == width {
+                    lines.push(std::mem::take(&mut chunk));
+                    chunk_len = 0;
+                }
+                chunk.push(ch);
+                chunk_len += 1;
+            }
+            current = chunk;
+            current_len = chunk_len;
+            continue;
+        }
+        let needed = if current.is_empty() { word_len } else { current_len + 1 + word_len };
+        if needed > width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+            current_len += 1;
+        }
+        current.push_str(word);
+        current_len += word_len;
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 fn visual_line_count<'a>(text: impl Into<Text<'a>>, width: u16) -> u16 {
@@ -200,7 +270,7 @@ fn compute_completions(input: &str) -> Vec<String> {
     matches
 }
 
-const INFO_FIELD_COUNT: usize = 7;
+const INFO_FIELD_COUNT: usize = 8;
 const README_HPAD: u16 = 2;
 
 #[derive(Default, Clone, Copy)]
@@ -226,14 +296,21 @@ struct App {
     username: String,
     focused_panel: Panel,
     sort_order: SortOrder,
-    repos_original: Vec<Repo>,
+    source: RepoSource,
+    mine: Vec<Repo>,
+    starred: Option<Vec<Repo>>,
     areas: PanelAreas,
+    // Display row -> info field index, rebuilt each render (the description
+    // wraps, so a field can span several rows).
+    info_rows: Vec<usize>,
 }
 
 impl App {
     fn new(repos: Vec<Repo>) -> Self {
         Self {
-            repos_original: repos.clone(),
+            mine: repos.clone(),
+            starred: None,
+            source: RepoSource::Mine,
             repos,
             selected: 0,
             repo_offset: 0,
@@ -250,6 +327,7 @@ impl App {
             focused_panel: Panel::Repos,
             sort_order: SortOrder::Recent,
             areas: PanelAreas::default(),
+            info_rows: Vec::new(),
         }
     }
 
@@ -313,7 +391,7 @@ impl App {
             return None;
         }
         let row = (y - inner.y) as usize;
-        (row < INFO_FIELD_COUNT).then_some(row)
+        self.info_rows.get(row).copied()
     }
 
     fn readme_viewport(&self) -> u16 {
@@ -359,19 +437,23 @@ impl App {
     }
 
     fn apply_sort(&mut self) {
-        match self.sort_order {
-            SortOrder::Recent => {
-                self.repos = self.repos_original.clone();
-            }
-            SortOrder::Alphabetical => {
-                self.repos = self.repos_original.clone();
-                self.repos.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-            }
+        let base = match self.source {
+            RepoSource::Mine => &self.mine,
+            RepoSource::Starred => self.starred.as_deref().unwrap_or(&[]),
+        };
+        self.repos = base.to_vec();
+        if self.sort_order == SortOrder::Alphabetical {
+            self.repos.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         }
     }
 
-    fn set_repos(&mut self, repos: Vec<Repo>) {
-        self.repos_original = repos;
+    fn set_mine(&mut self, repos: Vec<Repo>) {
+        self.mine = repos;
+        self.apply_sort();
+    }
+
+    fn set_starred(&mut self, repos: Vec<Repo>) {
+        self.starred = Some(repos);
         self.apply_sort();
     }
 }
@@ -597,10 +679,39 @@ async fn run(
                                 app.repo_offset = 0;
                                 continue;
                             }
+                            KeyCode::Char('v') => {
+                                app.source = app.source.toggle();
+                                if app.source == RepoSource::Starred && app.starred.is_none() {
+                                    app.status_msg = Some("Loading starred repos...".into());
+                                    terminal.draw(|frame| ui(frame, app))?;
+                                    app.starred =
+                                        Some(fetch_starred_repos(client).await.unwrap_or_default());
+                                    app.status_msg = None;
+                                }
+                                app.apply_sort();
+                                app.repo_offset = 0;
+                                if app.repos.is_empty() {
+                                    app.selected = 0;
+                                    app.readme_content = None;
+                                    app.invalidate_readme_layout();
+                                } else {
+                                    select_repo(terminal, app, client, 0).await?;
+                                }
+                                continue;
+                            }
                             KeyCode::Char('r') => {
                                 app.status_msg = Some("Refreshing...".into());
                                 terminal.draw(|frame| ui(frame, app))?;
-                                app.set_repos(fetch_repos(client).await.unwrap_or_default());
+                                match app.source {
+                                    RepoSource::Mine => {
+                                        app.set_mine(fetch_repos(client).await.unwrap_or_default());
+                                    }
+                                    RepoSource::Starred => {
+                                        app.set_starred(
+                                            fetch_starred_repos(client).await.unwrap_or_default(),
+                                        );
+                                    }
+                                }
                                 if app.selected >= app.repos.len() {
                                     app.selected = app.repos.len().saturating_sub(1);
                                 }
@@ -802,8 +913,7 @@ async fn handle_prompt_submit(
             .await
             {
                 Ok(_) => {
-                    app.set_repos(fetch_repos(client).await.unwrap_or_default());
-                    app.apply_sort();
+                    app.set_mine(fetch_repos(client).await.unwrap_or_default());
                     app.status_msg = Some("Published successfully!".into());
                 }
                 Err(e) => {
@@ -854,8 +964,16 @@ async fn handle_prompt_submit(
                 .await
                 {
                     Ok(()) => {
-                        app.set_repos(fetch_repos(client).await.unwrap_or_default());
-                        app.apply_sort();
+                        match app.source {
+                            RepoSource::Mine => {
+                                app.set_mine(fetch_repos(client).await.unwrap_or_default());
+                            }
+                            RepoSource::Starred => {
+                                app.set_starred(
+                                    fetch_starred_repos(client).await.unwrap_or_default(),
+                                );
+                            }
+                        }
                         app.status_msg = Some("Updated!".into());
                     }
                     Err(e) => {
@@ -902,10 +1020,16 @@ fn ui(frame: &mut Frame, app: &mut App) {
     // Status bar
     let status_text = match &app.status_msg {
         Some(msg) => msg.clone(),
-        None => format!(
-            " {}  \u{2502}  q:quit  Tab:panel  j/k:nav  Enter:readme  s:sort  r:refresh  o:open  p:publish  c:clone  e:edit",
-            app.username,
-        ),
+        None => {
+            let toggle_label = match app.source {
+                RepoSource::Mine => "v:starred",
+                RepoSource::Starred => "v:my repos",
+            };
+            format!(
+                " {}  \u{2502}  q:quit  Tab:panel  j/k:nav  Enter:readme  {toggle_label}  s:sort  r:refresh  o:open  p:publish  c:clone  e:edit",
+                app.username,
+            )
+        }
     };
     let status_style = if app.status_msg.is_some() {
         Style::default().fg(Color::Yellow)
@@ -929,9 +1053,14 @@ fn render_prompt(frame: &mut Frame, state: &PromptState) {
         PromptKind::EditDescription => " Edit Repository ",
     };
 
-    let height = (state.fields.len() as u16) * 2 + 4;
-    let area = centered_rect(60, height, frame.area());
-    frame.render_widget(Clear, area);
+    // Fix the horizontal footprint first so wrapped line counts use the real
+    // inner width; the popup then grows vertically to fit long values.
+    let h_area = Layout::horizontal([
+        Constraint::Percentage(20),
+        Constraint::Percentage(60),
+        Constraint::Percentage(20),
+    ])
+    .split(frame.area())[1];
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
@@ -986,13 +1115,27 @@ fn render_prompt(frame: &mut Frame, state: &PromptState) {
         Style::default().fg(Color::DarkGray),
     )));
 
+    let inner_width = h_area.width.saturating_sub(2);
+    let height =
+        (visual_line_count(lines.clone(), inner_width) + 2).min(frame.area().height);
+    let area = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(height),
+        Constraint::Fill(1),
+    ])
+    .split(h_area)[1];
+    frame.render_widget(Clear, area);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_message(frame: &mut Frame, msg: &str) {
@@ -1067,11 +1210,12 @@ fn render_repo_list(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let sort_label = app.sort_order.label();
+    let source_title = app.source.title();
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(border_style(app, Panel::Repos))
-            .title(format!(" Repositories [{sort_label}] "))
+            .title(format!(" {source_title} [{sort_label}] "))
             .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     );
     // Selection is styled manually above; keep ListState's selected as None so
@@ -1118,46 +1262,67 @@ fn render_readme(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_repo_info(frame: &mut Frame, app: &App, area: Rect) {
+fn render_repo_info(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focused_panel == Panel::Info;
+    let inner_width = area.width.saturating_sub(2) as usize;
+    // Every field line starts with marker (2) + label column (13)
+    let value_width = inner_width.saturating_sub(15).max(10);
 
-    let text = if let Some(repo) = app.selected_repo() {
-        let desc = repo.description.as_deref().unwrap_or("No description");
-        let lang = repo.language.as_deref().unwrap_or("Unknown");
+    let mut info_rows: Vec<usize> = Vec::new();
+    let text = if let Some(repo) = app.selected_repo().cloned() {
+        let desc = repo.description.as_deref().unwrap_or("No description").to_string();
+        let lang = repo.language.as_deref().unwrap_or("Unknown").to_string();
+        let license = repo.license.as_deref().unwrap_or("None").to_string();
         let star = "\u{2605}";
 
         let fields: Vec<(&str, Vec<Span>)> = vec![
-            ("Name", vec![Span::raw(&repo.name)]),
-            ("Description", vec![Span::raw(desc)]),
-            ("URL", vec![Span::styled(&repo.url, Style::default().fg(Color::Blue))]),
+            ("Name", vec![Span::raw(repo.name)]),
+            ("Description", Vec::new()), // wrapped below
+            ("URL", vec![Span::styled(repo.url, Style::default().fg(Color::Blue))]),
             ("Language", vec![Span::styled(lang, Style::default().fg(Color::Yellow))]),
+            ("License", vec![Span::raw(license)]),
             ("Stars", vec![Span::styled(format!("{star} {}", repo.stars), Style::default().fg(Color::Yellow))]),
-            ("Visibility", vec![Span::raw(&repo.visibility)]),
-            ("Updated", vec![Span::raw(&repo.last_updated)]),
+            ("Visibility", vec![Span::raw(repo.visibility)]),
+            ("Updated", vec![Span::raw(repo.last_updated)]),
         ];
 
-        fields
-            .into_iter()
-            .enumerate()
-            .map(|(i, (label, value_spans))| {
-                let is_selected = focused && i == app.info_field;
-                let marker = if is_selected { "\u{25b6} " } else { "  " };
-                let label_style = if is_selected {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
-                let mut spans = vec![
-                    Span::styled(marker, Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{label:<13}"), label_style),
-                ];
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, (label, value_spans)) in fields.into_iter().enumerate() {
+            let is_selected = focused && i == app.info_field;
+            let marker = if is_selected { "\u{25b6} " } else { "  " };
+            let label_style = if is_selected {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let head = vec![
+                Span::styled(marker, Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{label:<13}"), label_style),
+            ];
+            if label == "Description" {
+                for (j, seg) in wrap_text(&desc, value_width).into_iter().enumerate() {
+                    let mut spans = if j == 0 {
+                        head.clone()
+                    } else {
+                        // Hanging indent: align continuation under the value column
+                        vec![Span::raw(" ".repeat(15))]
+                    };
+                    spans.push(Span::raw(seg));
+                    lines.push(Line::from(spans));
+                    info_rows.push(i);
+                }
+            } else {
+                let mut spans = head;
                 spans.extend(value_spans);
-                Line::from(spans)
-            })
-            .collect()
+                lines.push(Line::from(spans));
+                info_rows.push(i);
+            }
+        }
+        lines
     } else {
         vec![Line::from("  No repository selected")]
     };
+    app.info_rows = info_rows;
 
     let paragraph = Paragraph::new(text).block(
         Block::default()

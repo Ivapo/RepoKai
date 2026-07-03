@@ -10,6 +10,7 @@ interface Repo {
   description: string | null;
   url: string;
   language: string | null;
+  license: string | null;
   stars: number;
   visibility: string;
   last_updated: string;
@@ -27,6 +28,9 @@ let readmeRaw = "";
 let readmeRendered = false;
 let sortOrder: "recent" | "a-z" = "recent";
 let reposOriginal: Repo[] = [];
+let source: "mine" | "starred" = "mine";
+let mineCache: Repo[] = [];
+let starredCache: Repo[] | null = null;
 
 // ---- Theme cycling ----
 
@@ -108,6 +112,46 @@ function toggleSort(): void {
   }
 }
 
+function updateSourceUi(): void {
+  document.getElementById("repos-title")!.textContent =
+    source === "mine" ? "Repositories" : "Starred ★";
+  document.getElementById("btn-source")!.textContent =
+    source === "mine" ? "★ starred" : "my repos";
+}
+
+async function toggleSource(): Promise<void> {
+  if (source === "mine") {
+    if (starredCache === null) {
+      const ul = document.getElementById("repos")!;
+      ul.innerHTML = '<div class="loading">Loading starred…</div>';
+      try {
+        starredCache = await invoke<Repo[]>("get_starred_repos");
+      } catch (err) {
+        ul.innerHTML = "";
+        renderRepoList();
+        document.getElementById("readme-content")!.innerHTML =
+          '<div class="loading">Error: ' + escapeHtml(String(err)) + "</div>";
+        return;
+      }
+    }
+    reposOriginal = starredCache;
+    source = "starred";
+  } else {
+    reposOriginal = mineCache;
+    source = "mine";
+  }
+  updateSourceUi();
+  applySort();
+  renderRepoList();
+  if (repos.length > 0) {
+    selectRepo(0);
+  } else {
+    document.getElementById("info-content")!.innerHTML = "";
+    document.getElementById("readme-content")!.innerHTML =
+      '<div class="loading">No repositories</div>';
+  }
+}
+
 async function init(): Promise<void> {
   try {
     const username = await invoke<string>("get_user");
@@ -117,7 +161,8 @@ async function init(): Promise<void> {
   }
 
   try {
-    reposOriginal = await invoke<Repo[]>("get_repos");
+    mineCache = await invoke<Repo[]>("get_repos");
+    reposOriginal = mineCache;
     applySort();
     renderRepoList();
     if (repos.length > 0) {
@@ -134,7 +179,13 @@ async function init(): Promise<void> {
 
 async function refreshRepos(): Promise<void> {
   try {
-    reposOriginal = await invoke<Repo[]>("get_repos");
+    if (source === "mine") {
+      mineCache = await invoke<Repo[]>("get_repos");
+      reposOriginal = mineCache;
+    } else {
+      starredCache = await invoke<Repo[]>("get_starred_repos");
+      reposOriginal = starredCache;
+    }
     applySort();
     renderRepoList();
     if (selectedIndex >= repos.length) selectedIndex = repos.length - 1;
@@ -210,6 +261,7 @@ function renderInfo(repo: Repo): void {
     row("Description", escapeHtml(desc)) +
     row("URL", `<a href="${escapeHtml(repo.url)}">${escapeHtml(repo.url)}</a>`) +
     row("Language", escapeHtml(lang), "lang") +
+    row("License", escapeHtml(repo.license || "None")) +
     row("Stars", "\u2605 " + repo.stars, "stars") +
     row("Visibility", escapeHtml(repo.visibility)) +
     row("Updated", escapeHtml(repo.last_updated));
@@ -403,6 +455,7 @@ function showEditDialog(): void {
 
 // ---- Toolbar buttons ----
 
+document.getElementById("btn-source")!.addEventListener("click", toggleSource);
 document.getElementById("btn-sort")!.addEventListener("click", toggleSort);
 document.getElementById("btn-refresh")!.addEventListener("click", refreshRepos);
 document.getElementById("btn-publish")!.addEventListener("click", showPublishDialog);
@@ -436,6 +489,8 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
     }
   } else if (e.key === "t") {
     cycleTheme();
+  } else if (e.key === "v") {
+    toggleSource();
   } else if (e.key === "p") {
     showPublishDialog();
   } else if (e.key === "c") {

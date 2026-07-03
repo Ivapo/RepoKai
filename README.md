@@ -5,9 +5,10 @@ A GitHub repository browser and manager with both a terminal UI and a desktop GU
 ## Features
 
 - Browse your GitHub repositories with a 3-panel layout
+- Toggle between your repositories and the repos you have starred
 - View README files, rendered: styled markdown with syntax-highlighted code blocks in the TUI, HTML in the GUI
 - Mouse support in the TUI: wheel-scroll the panel under the cursor, click to focus and select
-- View repo info: description, language, stars, visibility, last updated
+- View repo info: description, language, license, stars, visibility, last updated
 - Publish a local git repo to GitHub
 - Clone repos to your machine
 - Edit repo description and visibility
@@ -65,6 +66,7 @@ cd crates/gui && cargo tauri dev
 | j/k, PageUp/PageDown | Scroll README |
 | Mouse wheel | Scroll the panel under the cursor (TUI) |
 | Left click | Focus panel, select repo or info field (TUI) |
+| v | Toggle view: my repos / starred |
 | s | Toggle sort: recent / a-z |
 | r | Refresh repo list |
 | o | Open repo in browser |

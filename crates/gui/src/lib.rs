@@ -21,6 +21,16 @@ async fn get_repos() -> Result<Vec<Repo>, String> {
 }
 
 #[tauri::command]
+async fn get_starred_repos() -> Result<Vec<Repo>, String> {
+    let client = repokai_core::create_client()
+        .await
+        .map_err(|e| e.to_string())?;
+    repokai_core::fetch_starred_repos(&client)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_readme(owner: String, repo: String) -> Result<Option<String>, String> {
     let client = repokai_core::create_client()
         .await
@@ -82,6 +92,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_user,
             get_repos,
+            get_starred_repos,
             get_readme,
             publish_repo,
             clone_repo,

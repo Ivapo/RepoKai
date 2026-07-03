@@ -3960,7 +3960,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "repokai-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "octocrab",
@@ -3972,7 +3972,7 @@ dependencies = [
 
 [[package]]
 name = "repokai-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "repokai-core",
  "serde",
@@ -3985,7 +3985,7 @@ dependencies = [
 
 [[package]]
 name = "repokai-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "pulldown-cmark",

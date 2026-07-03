@@ -11,6 +11,7 @@ pub struct Repo {
     pub description: Option<String>,
     pub url: String,
     pub language: Option<String>,
+    pub license: Option<String>,
     pub stars: u32,
     pub visibility: String,
     pub last_updated: String,
@@ -96,6 +97,36 @@ pub async fn get_authenticated_user(client: &Octocrab) -> Result<String, RepoKai
     Ok(user.login)
 }
 
+fn map_repo(repo: &octocrab::models::Repository) -> Repo {
+    Repo {
+        owner: repo
+            .owner
+            .as_ref()
+            .map(|o| o.login.clone())
+            .unwrap_or_default(),
+        name: repo.name.clone(),
+        description: repo.description.clone(),
+        url: repo
+            .html_url
+            .as_ref()
+            .map(|u| u.to_string())
+            .unwrap_or_default(),
+        language: repo.language.as_ref().and_then(|v| v.as_str()).map(String::from),
+        license: repo.license.as_ref().map(|l| l.name.clone()),
+        stars: repo.stargazers_count.unwrap_or(0) as u32,
+        visibility: if repo.private.unwrap_or(false) {
+            "private".into()
+        } else {
+            "public".into()
+        },
+        last_updated: repo
+            .updated_at
+            .map(|dt| dt.to_string())
+            .unwrap_or_default(),
+        readme: None,
+    }
+}
+
 pub async fn fetch_repos(client: &Octocrab) -> Result<Vec<Repo>, RepoKaiError> {
     let mut all_repos = Vec::new();
     let mut page_num = 1u8;
@@ -114,36 +145,36 @@ pub async fn fetch_repos(client: &Octocrab) -> Result<Vec<Repo>, RepoKaiError> {
             break;
         }
 
-        for repo in &page.items {
-            let owner = repo
-                .owner
-                .as_ref()
-                .map(|o| o.login.clone())
-                .unwrap_or_default();
+        all_repos.extend(page.items.iter().map(map_repo));
 
-            all_repos.push(Repo {
-                owner,
-                name: repo.name.clone(),
-                description: repo.description.clone(),
-                url: repo
-                    .html_url
-                    .as_ref()
-                    .map(|u| u.to_string())
-                    .unwrap_or_default(),
-                language: repo.language.as_ref().and_then(|v| v.as_str()).map(String::from),
-                stars: repo.stargazers_count.unwrap_or(0) as u32,
-                visibility: if repo.private.unwrap_or(false) {
-                    "private".into()
-                } else {
-                    "public".into()
-                },
-                last_updated: repo
-                    .updated_at
-                    .map(|dt| dt.to_string())
-                    .unwrap_or_default(),
-                readme: None,
-            });
+        if page.next.is_none() {
+            break;
         }
+        page_num += 1;
+    }
+
+    Ok(all_repos)
+}
+
+pub async fn fetch_starred_repos(client: &Octocrab) -> Result<Vec<Repo>, RepoKaiError> {
+    let mut all_repos = Vec::new();
+    let mut page_num = 1u8;
+
+    loop {
+        let page = client
+            .current()
+            .list_repos_starred_by_authenticated_user()
+            .sort("updated")
+            .per_page(100)
+            .page(page_num)
+            .send()
+            .await?;
+
+        if page.items.is_empty() {
+            break;
+        }
+
+        all_repos.extend(page.items.iter().map(map_repo));
 
         if page.next.is_none() {
             break;
@@ -282,6 +313,7 @@ pub async fn publish_local_repo(
             .map(|u| u.to_string())
             .unwrap_or_default(),
         language: repo.language.as_ref().and_then(|v| v.as_str()).map(String::from),
+        license: repo.license.as_ref().map(|l| l.name.clone()),
         stars: 0,
         visibility: if opts.private { "private".into() } else { "public".into() },
         last_updated: repo
